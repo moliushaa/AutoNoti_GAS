@@ -4,32 +4,46 @@
   GitHub: https://github.com/Gavin1937/AutoNoti_GAS
   Version: 2023.04.03.v01
 */
+/*
+  Updated:
+  AutoNoti_GAS: Automatically Send Scheduled Notification with Google Apps Script.
+  Author: moliushaa
+  GitHub: https://github.com/moliushaa/AutoNoti_GAS
+  Version: 2025.09.26.v01
+*/
 
-// All the columns are counting start from 0 instead of 1 
 var CONFIGURATION = {
-  SPREAD_SHEET_URL: "URL to Google SpreadSheet",
+  SPREAD_SHEET_URL: "https://docs.google.com/spreadsheets/d/1HKp3dKUgWwo7yaCN7qCVrLI8EEhYbuditYKzp80MTBI/",
   SCHEDULE_SHEET: {
-    RANGE: "!A:A",         // select range of Schedule Sheet
+    RANGE: "!A:E",         // select range of Schedule Sheet
     DATE_COLUMN: 0,        // which column is for Date
-    SERMON_COLUMN: 0,      // which column is for Sermon Person
-    WORSHIP_COLUMN: 0      // which column is for Worship Person
+    SERMON_COLUMN: 1,      // which column is for Sermon Person
+    WORSHIP_COLUMN: 3,     // which column is for Worship Person
+    SOUND_COLUMN: 4         // which column is for Sound people
   },
   CONTACT_SHEET: {
-    RANGE: "!A:A",         // select range of Contact Sheet
+    RANGE: "!A2:D",        // select range of Contact Sheet
     NAME_COLUMN: 0,        // which column is for name
-    REFER_NAME_COLUMN: 0,  // which column is for refer_name
-    EMAIL_COLUMN: 0,       // which column is for email
-    IS_ADMIN_COLUMN: 0     // which column is for is_admin
+    REFER_NAME_COLUMN: 1,  // which column is for refer_name
+    EMAIL_COLUMN: 2,       // which column is for email
+    IS_ADMIN_COLUMN: 3     // which column is for is_admin
   },
-  NOTI_MIN_INTERVAL: 0,    // minimum interval in weeks between two notifications
-  NOTI_AT_WKDAYS: ["MON"], // send notification at specific weekdays, this is a list.
-                           // ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-  NOTI_HOUR_RANGE: [0, 0], // notification hour range of a day. (0-23)
-                           // Script will send notification in time range >= first and <= second 
-  EMAIL_SUBJECT: "Email Subject for all emails"
+  // 1 week
+  NOTI_MIN_INTERVAL: 1,     // minimum time inteval of notification, in weeks
+  NOTI_AT_WKDAYS: ["MON"],  // send notification at specific weekdays, this is a list.
+                            // ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+  NOTI_HOUR_RANGE: [9, 20], // notification hour range of a day. (0-23)
+                            // Script will send notification in time range >= first and <= second 
+  EMAIL_SUBJECT: "GCDC-恩上之家: 自动提醒"
 }
 
 function autonoti() {
+  // For testing only!
+  // try{
+  //   throw new Error('something')
+  // }catch(error) {
+  //   throw error
+  // }
   
   // init check
   for (key in CONFIGURATION) {
@@ -45,7 +59,7 @@ function autonoti() {
   if (!spapp)
     throw Error("Cannot open spreadsheet url.");
   
-  // test for spamming
+  // test for spamming, if you want to test the code, make sure to comment out this part.
   if (isSpamming(spapp)) {
     Logger.log(`Spamming notification, blocked. Time: ${getDateString(today)}, Week Difference: ${NOTI_TIME_DELTA}`);
     return;
@@ -70,22 +84,30 @@ function autonoti() {
     throw Error("Cannot find weekly people.");
   var sermon_info = getContactInfo(spapp, cur_ppl[1]);
   var worship_info = getContactInfo(spapp, cur_ppl[2]);
+  var sound_info = getContactInfo(spapp, cur_ppl[3]);
   Logger.log(`sermon_info = [${sermon_info}]`);
   Logger.log(`worship_info = [${worship_info}]`);
+  Logger.log(`sound_info = [${sound_info}]`);
   
-  // generate sermon & worship msg
-  var msg_tmplt_url = spapp.getSheetByName("MessagesTemplate").getRange("!A1:B2").getValues();
+  // generate sermon & worship msg & sound msg
+  var msg_tmplt_url = spapp.getSheetByName("MessagesTemplate").getRange("!A1:B5").getValues();
   var sermon_msg = null;
   var worship_msg = null;
+  var sound_msg = null;
   if (isValidInfo(sermon_info)) {
     var sermon_url = msg_tmplt_url[0][1];
     var sermon_id = DocumentApp.openByUrl(sermon_url).getId();
-    sermon_msg = parseMessage(getHtmlByDocId(sermon_id), sermon_info[1], worship_info ? worship_info[1] : "");
+    sermon_msg = parseMessage(getHtmlByDocId(sermon_id), sermon_info[1], worship_info ? worship_info[1] : "", sound_info ? sound_info[1] : "");
   }
   if (isValidInfo(worship_info)) {
     var worship_url = msg_tmplt_url[1][1];
     var worship_id = DocumentApp.openByUrl(worship_url).getId();
-    worship_msg = parseMessage(getHtmlByDocId(worship_id), sermon_info ? sermon_info[1] : "", worship_info[1]);
+    worship_msg = parseMessage(getHtmlByDocId(worship_id), sermon_info ? sermon_info[1] : "", worship_info[1], sound_info ? sound_info[1] : "");
+  }
+  if (isValidInfo(sound_info)) {
+    var sound_url = msg_tmplt_url[2][1];
+    var sound_id = DocumentApp.openByUrl(sound_url).getId();
+    sound_msg = parseMessage(getHtmlByDocId(sound_id), sermon_info ? sermon_info[1] : "", worship_info ? worship_info[1] : "", sound_info[1]);
   }
   
   // send email to all
@@ -116,6 +138,19 @@ function autonoti() {
   else {
     Logger.log('No worship info & msg');
   }
+
+  //sound
+  if (sound_info && sound_msg) {
+    left_quota = sendEmail(
+      spapp,
+      sound_info[2],
+      CONFIGURATION['EMAIL_SUBJECT'],
+      sound_msg
+    );
+  }
+  else {
+    Logger.log('No sound info & msg');
+  }
   
   // admin
   for (a of admins) {
@@ -123,7 +158,7 @@ function autonoti() {
       spapp,
       a[2],
       CONFIGURATION['EMAIL_SUBJECT'],
-      "sermon msg:<br>" + sermon_msg + "<br>worship msg:<br>" + worship_msg
+      "sermon msg:<br>" + sermon_msg + "<br>worship msg:<br>" + worship_msg + "<br>sound msg:<br>" + sound_msg
     );
   }
   
@@ -182,20 +217,21 @@ function getHtmlByDocId(id) {
   return html;
 }
 
-function parseMessage(msg, sermon_name, worship_name) {
+function parseMessage(msg, sermon_name, worship_name, sound_name) {
   msg_keywords = {
+    //'name in here' should match the name in the docs
     'sermon_name': sermon_name,
     'worship_name': worship_name,
+    'sound_name1': sound_name,
     'admin_name': CONFIGURATION['ADMINS'][0][1],
     'admin_email': CONFIGURATION['ADMINS'][0][2]
   };
-  
-  match = [...msg.matchAll(/\${([a-zA-Z_]+)}/g)];
+  match = [...msg.matchAll(/\${(.*?)}/g)];
   for (m of match) {
     if (m[1] in msg_keywords) {
       replacement = msg_keywords[m[1]];
       msg = msg.replace(m[0], replacement);
-    }
+      }
   }
   return msg;
 }
@@ -204,17 +240,21 @@ function getWklyPeople(spapp) {
   var today = new Date();
   var sheet = spapp.getSheetByName("Schedule");
   var values = sheet.getRange(CONFIGURATION['SCHEDULE_SHEET']['RANGE']).getValues();
-  var date = new Date(0);
+  // var date = new Date(0);
   var date_col = CONFIGURATION['SCHEDULE_SHEET']['DATE_COLUMN'];
   var serm_col = CONFIGURATION['SCHEDULE_SHEET']['SERMON_COLUMN'];
   var wors_col = CONFIGURATION['SCHEDULE_SHEET']['WORSHIP_COLUMN'];
+  var sound_col = CONFIGURATION['SCHEDULE_SHEET']['SOUND_COLUMN'];
   for (v of values) {
+    /* 
+    now no year=xxxx option on Spreadsheet!
     // looking for year indicator first
-    if (typeof v[0] == 'string' && v[0].includes("year=")) {
-      date.setYear(v[0].substr(5, 4))
-      date.setMonth(0);
-      date.setDate(1);
-    }
+    // if (typeof v[0] == 'string' && v[0].includes("year=")) {
+    //   date.setYear(v[0].substr(5, 4))
+    //   date.setMonth(0);
+    //   date.setDate(1);
+    // }
+    
     // skip all rows from previous year
     if (date.getFullYear() < today.getFullYear()) {
       continue;
@@ -228,7 +268,22 @@ function getWklyPeople(spapp) {
       date.setSeconds(0);
       // check valid date & return it
       if (date >= today) {
-        return [date, v[serm_col], v[wors_col]];
+        return [date, v[serm_col], v[wors_col], v[sound_col]];
+      }
+    }
+  }
+  */
+  
+    // check if this row has a valid date
+    if (v[date_col] instanceof Date) {
+      var date = new Date(v[date_col]);
+      date.setHours(0);
+      date.setMinutes(0);
+      date.setSeconds(0);
+      
+      // check if date is today or in the future
+      if (date >= today) {
+        return [date, v[serm_col], v[wors_col], v[sound_col]];
       }
     }
   }
@@ -332,6 +387,7 @@ function weeksInBetween(early, late) {
 }
 
 var NOTI_TIME_DELTA = -1;
+// check if is spamming -> return True or False
 function isSpamming(spapp) {
   var today = new Date();
   var cache = spapp.getSheetByName("cache");
